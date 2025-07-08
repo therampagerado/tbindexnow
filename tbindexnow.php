@@ -72,7 +72,9 @@ class TbIndexNow extends Module
             && $this->registerHook('actionObjectProductUpdateAfter')
             && $this->registerHook('actionObjectProductDeleteAfter')
             && $this->registerHook('displayBackOfficeHeader')
-            && $this->registerHook('header');
+            && $this->registerHook('header')
+            && $this->registerHook('actionProductAttributeUpdate')
+            && $this->registerHook('actionProductAttributeDelete');
     }
 
     public function uninstall()
@@ -156,6 +158,30 @@ class TbIndexNow extends Module
     public function hookActionObjectProductDeleteAfter($params)
     {
         $this->hookActionObjectProductUpdateAfter($params);
+    }
+
+    /**
+     * Queue URLs when product combinations are updated (bulk update of combinations)
+     */
+    public function hookActionProductAttributeUpdate($params)
+    {
+        $idProduct = (int) ($params['id_product'] ?? 0);
+        if ($idProduct) {
+            $product = new Product($idProduct);
+            $this->hookActionObjectProductUpdateAfter(['object' => $product]);
+        }
+    }
+
+    /** 
+     * Queue URLs when product combinations are deleted (bulk update of combinations)
+     */
+    public function hookActionProductAttributeDelete($params)
+    {
+        $idProduct = (int) ($params['id_product'] ?? 0);
+        if ($idProduct) {
+            $product = new Product($idProduct);
+            $this->hookActionObjectProductUpdateAfter(['object' => $product]);
+        }
     }
 
     public function getContent()
