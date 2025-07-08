@@ -17,7 +17,7 @@ Queue URLs on product add/update/delete and submit them in bulk via cron using t
 
 ## Requirements
 
-- PrestaShop / Thirty Bees **1.6.x**  
+- Thirty Bees **1.6.x**  
 - PHP **5.6+** with cURL extension  
 - Write permissions on your shop root (for `<KEY>.txt`)
 
