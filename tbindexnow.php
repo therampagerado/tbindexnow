@@ -105,6 +105,10 @@ class TbIndexNow extends Module
 
     public function hookActionObjectProductAddAfter($params)
     {
+        // Skip on initial creation in all-shops context; wait for shop-specific save
+        if (Shop::getContext() === Shop::CONTEXT_ALL) {
+            return;
+        }
         /** @var Product $product */
         $product = $params['object'];
         // Only get shops where this product is assigned
@@ -128,12 +132,30 @@ class TbIndexNow extends Module
 
     public function hookActionObjectProductUpdateAfter($params)
     {
-        $this->hookActionObjectProductAddAfter($params);
+        /** @var Product $product */
+        $product = $params['object'];
+        // Only get shops where this product is assigned
+        $productShops = Product::getShopsByProduct($product->id);
+        foreach ($productShops as $shopRow) {
+            $idShop = (int)$shopRow['id_shop'];
+            $languages = Language::getLanguages(true, $idShop);
+            foreach ($languages as $lang) {
+                $url = $this->context->link->getProductLink(
+                    $product,
+                    null,
+                    null,
+                    null,
+                    (int)$lang['id_lang'],
+                    $idShop
+                );
+                $this->queueUrl($url);
+            }
+        }
     }
 
     public function hookActionObjectProductDeleteAfter($params)
     {
-        $this->hookActionObjectProductAddAfter($params);
+        $this->hookActionObjectProductUpdateAfter($params);
     }
 
     public function getContent()
