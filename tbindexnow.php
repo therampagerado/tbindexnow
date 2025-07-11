@@ -107,13 +107,10 @@ class TbIndexNow extends Module
 
     public function hookActionObjectProductAddAfter($params)
     {
-        // Skip on initial creation in all-shops context; wait for shop-specific save
         if (Shop::getContext() === Shop::CONTEXT_ALL) {
             return;
         }
-        /** @var Product $product */
         $product = $params['object'];
-        // Only get shops where this product is assigned
         $productShops = Product::getShopsByProduct($product->id);
         foreach ($productShops as $shopRow) {
             $idShop = (int)$shopRow['id_shop'];
@@ -186,13 +183,11 @@ class TbIndexNow extends Module
 
     public function getContent()
     {
-        // Intro panel
         $this->context->smarty->assign('module', $this);
         $intro = $this->context->smarty->fetch(
             $this->local_path . 'views/templates/admin/intro.tpl'
         );
 
-        // Bulk delete
         if (Tools::isSubmit('submitBulkdelete' . self::HISTORY_TABLE)) {
             $ids = Tools::getValue(self::HISTORY_TABLE . 'Box');
             if (is_array($ids)) {
@@ -205,7 +200,6 @@ class TbIndexNow extends Module
                 . '&configure=' . $this->name
             );
         }
-        // Single delete
         if (Tools::isSubmit('delete' . self::HISTORY_TABLE)) {
             $id = (int)Tools::getValue('id_history');
             $this->deleteHistory($id);
@@ -214,7 +208,7 @@ class TbIndexNow extends Module
                 . '&configure=' . $this->name
             );
         }
-        // Save settings
+        
         if (Tools::isSubmit('submit' . $this->name)) {
             return $intro . $this->postProcess() . $this->renderForm() . $this->renderStats();
         }
@@ -332,7 +326,6 @@ class TbIndexNow extends Module
             'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . self::QUEUE_TABLE . '`'
         );
 
-        // Fetch active shop IDs and details
         $shops = Shop::getShops(true, null, false);
 
         $cronHtml  = '<div class="panel"><h4>' . $this->l('Cron URLs per Shop') . '</h4><ul>';
@@ -343,37 +336,63 @@ class TbIndexNow extends Module
                 $this->name,
                 'cron',
                 ['key' => Configuration::get('INDEXNOW_API_KEY')],
-                true,    // ssl
-                null,    // id_lang
-                $idShop  // id_shop
+                true,
+                null,
+                $idShop
             );
-            // every 6 hours
-            $cronHtml .= '<li><code>0 */6 * * * curl ' 
-                . htmlspecialchars($cronLink) 
-                . '</code> (' 
-                . $shopName 
+            $cronHtml .= '<li><code>0 */6 * * * curl '
+                . htmlspecialchars($cronLink)
+                . '</code> ('
+                . $shopName
                 . ')</li>';
         }
         $cronHtml .= '</ul>'
             . '<div class="alert alert-warning">' . $this->l('Please set up a separate cron job for each domain using the URL(s) above. It is recommended to run the cronjobs every 6 to 12 hours depending on your crawl budget.') . '</div>'
             . '<h4>' . $this->l('Total Pending URLs') . ': ' . $pendingTotal . '</h4>'
             . '</div>';
-            
-        // Submission history panel remains unchanged
+
+        $listId        = self::HISTORY_TABLE;
+        $allowedSizes  = [50, 100, 300];
+        $defaultSize   = 50;
+
+        $paginationKey = $listId . '_pagination';
+        $limit         = (int) Tools::getValue($paginationKey, $defaultSize);
+        if (!in_array($limit, $allowedSizes)) {
+            $limit = $defaultSize;
+        }
+
+        $historyTable = _DB_PREFIX_ . self::HISTORY_TABLE;
+        $total        = (int) $db->getValue('SELECT COUNT(*) FROM `'. $historyTable .'`');
+
+        $totalPages = max(1, (int) ceil($total / $limit));
+
+        $pageKey = 'submitFilter' . $listId;
+        $page    = (int) Tools::getValue($pageKey, 1);
+        if ($page < 1) {
+            $page = 1;
+        } elseif ($page > $totalPages) {
+            $page = $totalPages;
+        }
+
+        $offset = ($page - 1) * $limit;
+
         $rows = $db->executeS(
-            'SELECT id_history, url, status_code, date_add FROM `' . _DB_PREFIX_ . self::HISTORY_TABLE . '` ORDER BY date_add DESC LIMIT 50'
+            'SELECT id_history, url, status_code, date_add
+             FROM `'. $historyTable .'`
+             ORDER BY date_add DESC
+             LIMIT '. (int)$offset .','. (int)$limit
         );
-        $helperList = new HelperList();
-        $helperList->title       = $this->l('Submission History');
-        $helperList->table       = self::HISTORY_TABLE;
-        $helperList->identifier  = 'id_history';
-        $helperList->token       = Tools::getAdminTokenLite('AdminModules');
-        $helperList->actions     = ['delete'];
-        $helperList->currentIndex=
-            $this->context->link->getAdminLink('AdminModules', true)
+
+        $baseUrl    = $this->context->link->getAdminLink('AdminModules', true)
             . '&configure=' . $this->name
             . '&tab_module=' . $this->tab
             . '&module_name=' . $this->name;
+        $helperList = new HelperList();
+        $helperList->title        = $this->l('Submission History');
+        $helperList->table        = self::HISTORY_TABLE;
+        $helperList->identifier   = 'id_history';
+        $helperList->token        = Tools::getAdminTokenLite('AdminModules');
+        $helperList->actions      = ['delete'];
         $helperList->bulk_actions = [
             'delete' => [
                 'text'    => $this->l('Delete selected'),
@@ -381,10 +400,18 @@ class TbIndexNow extends Module
                 'confirm' => $this->l('Delete selected items?'),
             ],
         ];
+
+        $helperList->currentIndex = $baseUrl
+            . '&' . $paginationKey . '=' . $limit
+            . '&' . $pageKey . '=' . $page;
+
+        $helperList->listTotal = $total;
+        $helperList->pagination = [50, 100, 300];
+
         $columns = [
-            'date_add'    => ['title' => $this->l('Date'), 'type' => 'datetime'],
+            'date_add'    => ['title' => $this->l('Date'),     'type' => 'datetime'],
             'url'         => ['title' => $this->l('URL')],
-            'status_code' => ['title' => $this->l('Status'), 'type' => 'int'],
+            'status_code' => ['title' => $this->l('Status'),   'type' => 'int'],
         ];
         $tableHtml = '<div class="panel">' . $helperList->generateList($rows, $columns) . '</div>';
 
