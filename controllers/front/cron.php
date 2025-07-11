@@ -51,6 +51,7 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
         $statusFinal = 0;
         $now         = date('Y-m-d H:i:s');
 
+        $successfulIds = [];
         foreach (array_chunk($urls, 10000) as $chunk) {
             $payload = json_encode([
                 'host'        => $currentHost,
@@ -70,6 +71,11 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
             }
             $statusFinal = $status;
 
+            if ($status === 200) {
+                // mark these IDs for deletion
+                $successfulIds = array_merge($successfulIds, array_slice($ids, 0, count($chunk)));
+            }
+
             // Log history for each URL in this chunk
             foreach ($chunk as $url) {
                 Db::getInstance()->insert(
@@ -82,6 +88,9 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
                     ]
                 );
             }
+
+            // remove IDs from front of list for next slice
+            $ids = array_slice($ids, count($chunk));
         }
 
         curl_close($ch);
