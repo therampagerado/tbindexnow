@@ -68,6 +68,7 @@ class TbIndexNow extends Module
             && Db::getInstance()->execute($sqlQueue)
             && Db::getInstance()->execute($sqlHistory)
             && Configuration::updateValue('INDEXNOW_API_KEY', '')
+            && Configuration::updateValue('INDEXNOW_HISTORY_KEEP_DAYS', 14)
             && $this->registerHook('actionObjectProductAddAfter')
             && $this->registerHook('actionObjectProductUpdateAfter')
             && $this->registerHook('actionObjectProductDeleteAfter')
@@ -84,6 +85,7 @@ class TbIndexNow extends Module
             @unlink(_PS_ROOT_DIR_ . '/' . $key . '.txt');
             Configuration::deleteByName('INDEXNOW_API_KEY');
         }
+        Configuration::deleteByName('INDEXNOW_HISTORY_KEEP_DAYS');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::QUEUE_TABLE .'`');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::HISTORY_TABLE .'`');
         return parent::uninstall();
@@ -240,6 +242,13 @@ class TbIndexNow extends Module
                 'hint'     => $this->l(
                     'Enter your API key (8–128 alphanumeric & dashes)'
                 )
+            ], [
+                'type'     => 'text',
+                'label'    => $this->l('History keep period (days)'),
+                'name'     => 'INDEXNOW_HISTORY_KEEP_DAYS',
+                'required' => true,
+                'class'    => 'fixed-width-sm',
+                'hint'     => $this->l('Records older than this number of days are deleted by cron from history and pending tables.'),
             ]],
             'submit' => ['title' => $this->l('Save')]
         ]];
@@ -247,7 +256,10 @@ class TbIndexNow extends Module
 
     protected function getConfigFormValues()
     {
-        return ['INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY')];
+        return [
+            'INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY'),
+            'INDEXNOW_HISTORY_KEEP_DAYS' => (int) Configuration::get('INDEXNOW_HISTORY_KEEP_DAYS', 14),
+        ];
     }
 
     protected function renderForm()
@@ -286,11 +298,22 @@ class TbIndexNow extends Module
                     $this->l('Invalid API key format')
                 );
             }
+            if ($key === 'INDEXNOW_HISTORY_KEEP_DAYS') {
+                $days = (int) $val;
+                if ($days < 1) {
+                    return $this->displayError(
+                        $this->l('History keep period must be at least 1 day')
+                    );
+                }
+                $val = $days;
+            }
             Configuration::updateValue($key, $val);
-            @file_put_contents(
-                _PS_ROOT_DIR_ . '/' . $val . '.txt',
-                $val
-            );
+            if ($key === 'INDEXNOW_API_KEY') {
+                @file_put_contents(
+                    _PS_ROOT_DIR_ . '/' . $val . '.txt',
+                    $val
+                );
+            }
         }
         return $this->displayConfirmation(
             $this->l('Settings updated')
