@@ -24,6 +24,14 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
 
         $db      = Db::getInstance();
         $currentHost = parse_url(Tools::getShopDomainSsl(true), PHP_URL_HOST);
+        $retentionDays = (int)Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
+        if ($retentionDays < 1) {
+            $retentionDays = TbIndexNow::HISTORY_RETENTION_DAYS_DEFAULT;
+        }
+
+        $cutoff = date('Y-m-d H:i:s', strtotime('-' . $retentionDays . ' days'));
+        $db->delete(_DB_PREFIX_ . TbIndexNow::HISTORY_TABLE, "date_add < '" . pSQL($cutoff) . "'");
+        $db->delete(_DB_PREFIX_ . TbIndexNow::QUEUE_TABLE, "date_add < '" . pSQL($cutoff) . "'");
 
         // Fetch only URLs queued for this shop's domain
         $allQueue = $db->executeS('SELECT id_queue, url FROM `' . _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE . '`');
@@ -52,7 +60,9 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
         $now         = date('Y-m-d H:i:s');
 
         $successfulIds = [];
+        $chunkIds = [];
         foreach (array_chunk($urls, 10000) as $chunk) {
+            $chunkIds = array_slice($ids, 0, count($chunk));
             $payload = json_encode([
                 'host'        => $currentHost,
                 'key'         => $key,
@@ -73,7 +83,7 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
 
             if ($status === 200) {
                 // mark these IDs for deletion
-                $successfulIds = array_merge($successfulIds, array_slice($ids, 0, count($chunk)));
+                $successfulIds = array_merge($successfulIds, $chunkIds);
             }
 
             // Log history for each URL in this chunk
@@ -96,10 +106,12 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
         curl_close($ch);
 
         // Remove only processed entries from queue
-        Db::getInstance()->delete(
-            _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE,
-            'id_queue IN (' . implode(', ', array_map('intval', $ids)) . ')'
-        );
+        if (!empty($successfulIds)) {
+            Db::getInstance()->delete(
+                _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE,
+                'id_queue IN (' . implode(', ', array_map('intval', $successfulIds)) . ')'
+            );
+        }
 
         // Output summary
         http_response_code($statusFinal);

@@ -33,6 +33,7 @@ class TbIndexNow extends Module
     protected $config_form = false;
     const QUEUE_TABLE   = 'tbindexnow_queue';
     const HISTORY_TABLE = 'tbindexnow_history';
+    const HISTORY_RETENTION_DAYS_DEFAULT = 14;
 
     public function __construct()
     {
@@ -68,6 +69,7 @@ class TbIndexNow extends Module
             && Db::getInstance()->execute($sqlQueue)
             && Db::getInstance()->execute($sqlHistory)
             && Configuration::updateValue('INDEXNOW_API_KEY', '')
+            && Configuration::updateValue('INDEXNOW_HISTORY_RETENTION_DAYS', self::HISTORY_RETENTION_DAYS_DEFAULT)
             && $this->registerHook('actionObjectProductAddAfter')
             && $this->registerHook('actionObjectProductUpdateAfter')
             && $this->registerHook('actionObjectProductDeleteAfter')
@@ -84,6 +86,7 @@ class TbIndexNow extends Module
             @unlink(_PS_ROOT_DIR_ . '/' . $key . '.txt');
             Configuration::deleteByName('INDEXNOW_API_KEY');
         }
+        Configuration::deleteByName('INDEXNOW_HISTORY_RETENTION_DAYS');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::QUEUE_TABLE .'`');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::HISTORY_TABLE .'`');
         return parent::uninstall();
@@ -231,23 +234,41 @@ class TbIndexNow extends Module
     {
         return ['form' => [
             'legend' => ['title' => $this->l('Settings'), 'icon' => 'icon-cogs'],
-            'input'  => [[
-                'type'     => 'text',
-                'label'    => $this->l('IndexNow API Key'),
-                'name'     => 'INDEXNOW_API_KEY',
-                'size'     => 50,
-                'required' => true,
-                'hint'     => $this->l(
-                    'Enter your API key (8–128 alphanumeric & dashes)'
-                )
-            ]],
+            'input'  => [
+                [
+                    'type'     => 'text',
+                    'label'    => $this->l('IndexNow API Key'),
+                    'name'     => 'INDEXNOW_API_KEY',
+                    'size'     => 50,
+                    'required' => true,
+                    'hint'     => $this->l(
+                        'Enter your API key (8–128 alphanumeric & dashes)'
+                    )
+                ],
+                [
+                    'type'     => 'text',
+                    'label'    => $this->l('History keep period (days)'),
+                    'name'     => 'INDEXNOW_HISTORY_RETENTION_DAYS',
+                    'class'    => 'fixed-width-sm',
+                    'required' => true,
+                    'hint'     => $this->l('Records older than this number of days are removed from history and pending queue during cron runs.'),
+                ],
+            ],
             'submit' => ['title' => $this->l('Save')]
         ]];
     }
 
     protected function getConfigFormValues()
     {
-        return ['INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY')];
+        $retentionDays = (int)Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
+        if ($retentionDays <= 0) {
+            $retentionDays = self::HISTORY_RETENTION_DAYS_DEFAULT;
+        }
+
+        return [
+            'INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY'),
+            'INDEXNOW_HISTORY_RETENTION_DAYS' => $retentionDays,
+        ];
     }
 
     protected function renderForm()
@@ -286,11 +307,25 @@ class TbIndexNow extends Module
                     $this->l('Invalid API key format')
                 );
             }
+
+            if ($key === 'INDEXNOW_HISTORY_RETENTION_DAYS') {
+                $days = (int)$val;
+                if ((string)$days !== trim((string)$val) || $days < 1) {
+                    return $this->displayError(
+                        $this->l('History keep period must be a whole number greater than 0')
+                    );
+                }
+                $val = $days;
+            }
+
             Configuration::updateValue($key, $val);
-            @file_put_contents(
-                _PS_ROOT_DIR_ . '/' . $val . '.txt',
-                $val
-            );
+
+            if ($key === 'INDEXNOW_API_KEY') {
+                @file_put_contents(
+                    _PS_ROOT_DIR_ . '/' . $val . '.txt',
+                    $val
+                );
+            }
         }
         return $this->displayConfirmation(
             $this->l('Settings updated')
