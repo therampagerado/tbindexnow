@@ -68,6 +68,7 @@ class TbIndexNow extends Module
             && Db::getInstance()->execute($sqlQueue)
             && Db::getInstance()->execute($sqlHistory)
             && Configuration::updateValue('INDEXNOW_API_KEY', '')
+            && Configuration::updateValue('INDEXNOW_HISTORY_RETENTION_DAYS', 14)
             && $this->registerHook('actionObjectProductAddAfter')
             && $this->registerHook('actionObjectProductUpdateAfter')
             && $this->registerHook('actionObjectProductDeleteAfter')
@@ -240,6 +241,13 @@ class TbIndexNow extends Module
                 'hint'     => $this->l(
                     'Enter your API key (8–128 alphanumeric & dashes)'
                 )
+            ], [
+                'type'     => 'text',
+                'label'    => $this->l('History keep period (days)'),
+                'name'     => 'INDEXNOW_HISTORY_RETENTION_DAYS',
+                'size'     => 10,
+                'required' => true,
+                'hint'     => $this->l('Keep history and pending URLs for this many days.'),
             ]],
             'submit' => ['title' => $this->l('Save')]
         ]];
@@ -247,7 +255,10 @@ class TbIndexNow extends Module
 
     protected function getConfigFormValues()
     {
-        return ['INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY')];
+        return [
+            'INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY'),
+            'INDEXNOW_HISTORY_RETENTION_DAYS' => (int) Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS') ?: 14,
+        ];
     }
 
     protected function renderForm()
@@ -286,11 +297,22 @@ class TbIndexNow extends Module
                     $this->l('Invalid API key format')
                 );
             }
+            if ($key === 'INDEXNOW_HISTORY_RETENTION_DAYS') {
+                $days = (int) $val;
+                if ((string)$days !== (string)$val || $days < 1) {
+                    return $this->displayError(
+                        $this->l('History keep period must be a positive number of days')
+                    );
+                }
+                $val = $days;
+            }
             Configuration::updateValue($key, $val);
-            @file_put_contents(
-                _PS_ROOT_DIR_ . '/' . $val . '.txt',
-                $val
-            );
+            if ($key === 'INDEXNOW_API_KEY') {
+                @file_put_contents(
+                    _PS_ROOT_DIR_ . '/' . $val . '.txt',
+                    $val
+                );
+            }
         }
         return $this->displayConfirmation(
             $this->l('Settings updated')

@@ -25,6 +25,21 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
         $db      = Db::getInstance();
         $currentHost = parse_url(Tools::getShopDomainSsl(true), PHP_URL_HOST);
 
+        $retentionDays = (int) Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
+        if ($retentionDays < 1) {
+            $retentionDays = 14;
+        }
+        $cutoff = date('Y-m-d H:i:s', strtotime('-' . $retentionDays . ' days'));
+
+        $db->delete(
+            _DB_PREFIX_ . TbIndexNow::HISTORY_TABLE,
+            "date_add < '" . pSQL($cutoff) . "'"
+        );
+        $db->delete(
+            _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE,
+            "date_add < '" . pSQL($cutoff) . "'"
+        );
+
         // Fetch only URLs queued for this shop's domain
         $allQueue = $db->executeS('SELECT id_queue, url FROM `' . _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE . '`');
         $filtered = array_filter($allQueue, function($row) use ($currentHost) {
@@ -95,11 +110,13 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
 
         curl_close($ch);
 
-        // Remove only processed entries from queue
-        Db::getInstance()->delete(
-            _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE,
-            'id_queue IN (' . implode(', ', array_map('intval', $ids)) . ')'
-        );
+        // Remove successfully processed entries from queue
+        if (!empty($successfulIds)) {
+            Db::getInstance()->delete(
+                _DB_PREFIX_ . TbIndexNow::QUEUE_TABLE,
+                'id_queue IN (' . implode(', ', array_map('intval', $successfulIds)) . ')'
+            );
+        }
 
         // Output summary
         http_response_code($statusFinal);
