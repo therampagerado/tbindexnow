@@ -81,7 +81,7 @@ class TbIndexNowCronModuleFrontController extends ModuleFrontController
             }
             $statusFinal = $status;
 
-            if ($status === 200) {
+            if ($status >= 200 && $status < 300) {
                 // mark these IDs for deletion
                 $successfulIds = array_merge($successfulIds, $chunkIds);
             }

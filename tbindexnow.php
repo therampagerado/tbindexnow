@@ -260,14 +260,17 @@ class TbIndexNow extends Module
 
     protected function getConfigFormValues()
     {
-        $retentionDays = (int)Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
-        if ($retentionDays <= 0) {
+        $apiKey = (string) Configuration::get('INDEXNOW_API_KEY');
+        $retentionRaw = Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
+        $retentionDays = (int) $retentionRaw;
+
+        if ($retentionRaw === false || $retentionRaw === '' || $retentionDays < 1) {
             $retentionDays = self::HISTORY_RETENTION_DAYS_DEFAULT;
         }
 
         return [
-            'INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY'),
-            'INDEXNOW_HISTORY_RETENTION_DAYS' => $retentionDays,
+            'INDEXNOW_API_KEY' => $apiKey,
+            'INDEXNOW_HISTORY_RETENTION_DAYS' => (int) $retentionDays,
         ];
     }
 
@@ -298,14 +301,18 @@ class TbIndexNow extends Module
     protected function postProcess()
     {
         $values = $this->getConfigFormValues();
+        $previousApiKey = trim((string) Configuration::get('INDEXNOW_API_KEY'));
+        $apiKeyFileWriteFailed = false;
+
         foreach (array_keys($values) as $key) {
             $val = Tools::getValue($key);
-            if ($key === 'INDEXNOW_API_KEY'
-                && !preg_match('/^[A-Za-z0-9\-]{8,128}$/', $val)
-            ) {
-                return $this->displayError(
-                    $this->l('Invalid API key format')
-                );
+            if ($key === 'INDEXNOW_API_KEY') {
+                $val = trim((string) $val);
+                if (!preg_match('/^[A-Za-z0-9\-]{8,128}$/', $val)) {
+                    return $this->displayError(
+                        $this->l('Invalid API key format')
+                    );
+                }
             }
 
             if ($key === 'INDEXNOW_HISTORY_RETENTION_DAYS') {
@@ -320,16 +327,30 @@ class TbIndexNow extends Module
 
             Configuration::updateValue($key, $val);
 
-            if ($key === 'INDEXNOW_API_KEY') {
-                @file_put_contents(
-                    _PS_ROOT_DIR_ . '/' . $val . '.txt',
-                    $val
-                );
+            if ($key === 'INDEXNOW_API_KEY' && $val !== '') {
+                $newFile = _PS_ROOT_DIR_ . '/' . $val . '.txt';
+                if (file_put_contents($newFile, $val) === false) {
+                    $apiKeyFileWriteFailed = true;
+                } elseif ($previousApiKey !== '' && $previousApiKey !== $val) {
+                    $oldFile = _PS_ROOT_DIR_ . '/' . $previousApiKey . '.txt';
+                    if (is_file($oldFile)) {
+                        @unlink($oldFile);
+                    }
+                }
             }
         }
-        return $this->displayConfirmation(
+
+        $message = $this->displayConfirmation(
             $this->l('Settings updated')
         );
+
+        if ($apiKeyFileWriteFailed) {
+            $message .= $this->displayError(
+                $this->l('Settings were saved, but the API key file could not be written')
+            );
+        }
+
+        return $message;
     }
 
     public function hookDisplayBackOfficeHeader()
