@@ -190,6 +190,14 @@ class TbIndexNow extends Module
         $intro = $this->context->smarty->fetch(
             $this->local_path . 'views/templates/admin/intro.tpl'
         );
+        $message = '';
+
+        if (Tools::isSubmit('submitPurgeUnsuccessful' . $this->name)) {
+            $this->purgeUnsuccessfulEntries();
+            $message .= $this->displayConfirmation(
+                $this->l('Unsuccessful entries were deleted from history and pending queue')
+            );
+        }
 
         if (Tools::isSubmit('submitBulkdelete' . self::HISTORY_TABLE)) {
             $ids = Tools::getValue(self::HISTORY_TABLE . 'Box');
@@ -213,11 +221,38 @@ class TbIndexNow extends Module
         }
         
         if (Tools::isSubmit('submit' . $this->name)) {
-            return $intro . $this->postProcess() . $this->renderForm() . $this->renderStats();
+            return $intro . $message . $this->postProcess() . $this->renderForm() . $this->renderStats();
         }
 
         $this->context->smarty->assign('module_dir', $this->_path);
-        return $intro . $this->renderForm() . $this->renderStats();
+        return $intro . $message . $this->renderForm() . $this->renderStats();
+    }
+
+    protected function purgeUnsuccessfulEntries()
+    {
+        $db = Db::getInstance();
+        $historyTable = _DB_PREFIX_ . self::HISTORY_TABLE;
+        $queueTable = _DB_PREFIX_ . self::QUEUE_TABLE;
+
+        $failedUrls = $db->executeS(
+            'SELECT DISTINCT `url` FROM `' . $historyTable . '` WHERE status_code < 200 OR status_code >= 300'
+        );
+
+        if (is_array($failedUrls) && !empty($failedUrls)) {
+            $escapedUrls = array_map(function ($row) {
+                return "'" . pSQL($row['url']) . "'";
+            }, $failedUrls);
+
+            $db->delete(
+                $queueTable,
+                'url IN (' . implode(', ', $escapedUrls) . ')'
+            );
+        }
+
+        $db->delete(
+            $historyTable,
+            'status_code < 200 OR status_code >= 300'
+        );
     }
 
     protected function deleteHistory($id)
@@ -277,7 +312,7 @@ class TbIndexNow extends Module
     protected function renderForm()
     {
         $helper = new HelperForm();
-        $helper->show_toolbar            = false;
+        $helper->show_toolbar            = true;
         $helper->table                   = 'configuration';
         $helper->module                  = $this;
         $helper->default_form_language   = $this->context->language->id;
@@ -290,6 +325,18 @@ class TbIndexNow extends Module
             . '&tab_module=' . $this->tab
             . '&module_name=' . $this->name;
         $helper->token                   = Tools::getAdminTokenLite('AdminModules');
+        $actionUrl = $this->context->link->getAdminLink('AdminModules', true)
+            . '&configure=' . $this->name
+            . '&tab_module=' . $this->tab
+            . '&module_name=' . $this->name
+            . '&submitPurgeUnsuccessful' . $this->name . '=1';
+        $helper->toolbar_btn             = [
+            'purge_unsuccessful' => [
+                'href' => $actionUrl,
+                'desc' => $this->l('Delete unsuccessful entries'),
+                'icon' => 'process-icon-delete',
+            ],
+        ];
         $helper->tpl_vars                = [
             'fields_value' => $this->getConfigFormValues(),
             'languages'    => $this->context->controller->getLanguages(),
