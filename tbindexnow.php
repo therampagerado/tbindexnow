@@ -33,6 +33,7 @@ class TbIndexNow extends Module
     protected $config_form = false;
     const QUEUE_TABLE   = 'tbindexnow_queue';
     const HISTORY_TABLE = 'tbindexnow_history';
+    const HISTORY_RETENTION_DAYS_DEFAULT = 14;
 
     public function __construct()
     {
@@ -68,6 +69,7 @@ class TbIndexNow extends Module
             && Db::getInstance()->execute($sqlQueue)
             && Db::getInstance()->execute($sqlHistory)
             && Configuration::updateValue('INDEXNOW_API_KEY', '')
+            && Configuration::updateValue('INDEXNOW_HISTORY_RETENTION_DAYS', self::HISTORY_RETENTION_DAYS_DEFAULT)
             && $this->registerHook('actionObjectProductAddAfter')
             && $this->registerHook('actionObjectProductUpdateAfter')
             && $this->registerHook('actionObjectProductDeleteAfter')
@@ -84,6 +86,7 @@ class TbIndexNow extends Module
             @unlink(_PS_ROOT_DIR_ . '/' . $key . '.txt');
             Configuration::deleteByName('INDEXNOW_API_KEY');
         }
+        Configuration::deleteByName('INDEXNOW_HISTORY_RETENTION_DAYS');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::QUEUE_TABLE .'`');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `'. _DB_PREFIX_ . self::HISTORY_TABLE .'`');
         return parent::uninstall();
@@ -188,6 +191,29 @@ class TbIndexNow extends Module
             $this->local_path . 'views/templates/admin/intro.tpl'
         );
 
+        $purgeUrl = $this->context->link->getAdminLink('AdminModules', true)
+            . '&configure=' . $this->name
+            . '&tab_module=' . $this->tab
+            . '&module_name=' . $this->name
+            . '&submitPurgeUnsuccessful' . $this->name . '=1';
+        $confirmText = addslashes($this->l('Delete all unsuccessful entries from both tables?'));
+        $actionHtml = '<div class="panel">'
+            . '<h3><i class="icon-wrench"></i> ' . $this->l('Maintenance') . '</h3>'
+            . '<a class="btn btn-default" href="' . htmlspecialchars($purgeUrl, ENT_QUOTES, 'UTF-8') . '" '
+            . 'onclick="return confirm(\'' . $confirmText . '\');">'
+            . '<i class="icon-trash"></i> ' . $this->l('Delete unsuccessful entries')
+            . '</a>'
+            . '</div>';
+
+        $message = '';
+
+        if (Tools::isSubmit('submitPurgeUnsuccessful' . $this->name)) {
+            $this->purgeUnsuccessfulEntries();
+            $message .= $this->displayConfirmation(
+                $this->l('Unsuccessful entries were deleted from history and pending queue')
+            );
+        }
+
         if (Tools::isSubmit('submitBulkdelete' . self::HISTORY_TABLE)) {
             $ids = Tools::getValue(self::HISTORY_TABLE . 'Box');
             if (is_array($ids)) {
@@ -210,11 +236,38 @@ class TbIndexNow extends Module
         }
         
         if (Tools::isSubmit('submit' . $this->name)) {
-            return $intro . $this->postProcess() . $this->renderForm() . $this->renderStats();
+            return $intro . $message . $actionHtml . $this->postProcess() . $this->renderForm() . $this->renderStats();
         }
 
         $this->context->smarty->assign('module_dir', $this->_path);
-        return $intro . $this->renderForm() . $this->renderStats();
+        return $intro . $message . $actionHtml . $this->renderForm() . $this->renderStats();
+    }
+
+    protected function purgeUnsuccessfulEntries()
+    {
+        $db = Db::getInstance();
+        $historyTable = _DB_PREFIX_ . self::HISTORY_TABLE;
+        $queueTable = _DB_PREFIX_ . self::QUEUE_TABLE;
+
+        $failedUrls = $db->executeS(
+            'SELECT DISTINCT `url` FROM `' . $historyTable . '` WHERE status_code < 200 OR status_code >= 300'
+        );
+
+        if (is_array($failedUrls) && !empty($failedUrls)) {
+            $escapedUrls = array_map(function ($row) {
+                return "'" . pSQL($row['url']) . "'";
+            }, $failedUrls);
+
+            $db->delete(
+                $queueTable,
+                'url IN (' . implode(', ', $escapedUrls) . ')'
+            );
+        }
+
+        $db->delete(
+            $historyTable,
+            'status_code < 200 OR status_code >= 300'
+        );
     }
 
     protected function deleteHistory($id)
@@ -231,23 +284,44 @@ class TbIndexNow extends Module
     {
         return ['form' => [
             'legend' => ['title' => $this->l('Settings'), 'icon' => 'icon-cogs'],
-            'input'  => [[
-                'type'     => 'text',
-                'label'    => $this->l('IndexNow API Key'),
-                'name'     => 'INDEXNOW_API_KEY',
-                'size'     => 50,
-                'required' => true,
-                'hint'     => $this->l(
-                    'Enter your API key (8–128 alphanumeric & dashes)'
-                )
-            ]],
+            'input'  => [
+                [
+                    'type'     => 'text',
+                    'label'    => $this->l('IndexNow API Key'),
+                    'name'     => 'INDEXNOW_API_KEY',
+                    'size'     => 50,
+                    'required' => true,
+                    'hint'     => $this->l(
+                        'Enter your API key (8–128 alphanumeric & dashes)'
+                    )
+                ],
+                [
+                    'type'     => 'text',
+                    'label'    => $this->l('History keep period (days)'),
+                    'name'     => 'INDEXNOW_HISTORY_RETENTION_DAYS',
+                    'class'    => 'fixed-width-sm',
+                    'required' => true,
+                    'hint'     => $this->l('Records older than this number of days are removed from history and pending queue during cron runs.'),
+                ],
+            ],
             'submit' => ['title' => $this->l('Save')]
         ]];
     }
 
     protected function getConfigFormValues()
     {
-        return ['INDEXNOW_API_KEY' => Configuration::get('INDEXNOW_API_KEY')];
+        $apiKey = (string) Configuration::get('INDEXNOW_API_KEY');
+        $retentionRaw = Configuration::get('INDEXNOW_HISTORY_RETENTION_DAYS');
+        $retentionDays = (int) $retentionRaw;
+
+        if ($retentionRaw === false || $retentionRaw === '' || $retentionDays < 1) {
+            $retentionDays = self::HISTORY_RETENTION_DAYS_DEFAULT;
+        }
+
+        return [
+            'INDEXNOW_API_KEY' => $apiKey,
+            'INDEXNOW_HISTORY_RETENTION_DAYS' => (int) $retentionDays,
+        ];
     }
 
     protected function renderForm()
@@ -277,24 +351,56 @@ class TbIndexNow extends Module
     protected function postProcess()
     {
         $values = $this->getConfigFormValues();
+        $previousApiKey = trim((string) Configuration::get('INDEXNOW_API_KEY'));
+        $apiKeyFileWriteFailed = false;
+
         foreach (array_keys($values) as $key) {
             $val = Tools::getValue($key);
-            if ($key === 'INDEXNOW_API_KEY'
-                && !preg_match('/^[A-Za-z0-9\-]{8,128}$/', $val)
-            ) {
-                return $this->displayError(
-                    $this->l('Invalid API key format')
-                );
+            if ($key === 'INDEXNOW_API_KEY') {
+                $val = trim((string) $val);
+                if (!preg_match('/^[A-Za-z0-9\-]{8,128}$/', $val)) {
+                    return $this->displayError(
+                        $this->l('Invalid API key format')
+                    );
+                }
             }
+
+            if ($key === 'INDEXNOW_HISTORY_RETENTION_DAYS') {
+                $days = (int)$val;
+                if ((string)$days !== trim((string)$val) || $days < 1) {
+                    return $this->displayError(
+                        $this->l('History keep period must be a whole number greater than 0')
+                    );
+                }
+                $val = $days;
+            }
+
             Configuration::updateValue($key, $val);
-            @file_put_contents(
-                _PS_ROOT_DIR_ . '/' . $val . '.txt',
-                $val
-            );
+
+            if ($key === 'INDEXNOW_API_KEY' && $val !== '') {
+                $newFile = _PS_ROOT_DIR_ . '/' . $val . '.txt';
+                if (file_put_contents($newFile, $val) === false) {
+                    $apiKeyFileWriteFailed = true;
+                } elseif ($previousApiKey !== '' && $previousApiKey !== $val) {
+                    $oldFile = _PS_ROOT_DIR_ . '/' . $previousApiKey . '.txt';
+                    if (is_file($oldFile)) {
+                        @unlink($oldFile);
+                    }
+                }
+            }
         }
-        return $this->displayConfirmation(
+
+        $message = $this->displayConfirmation(
             $this->l('Settings updated')
         );
+
+        if ($apiKeyFileWriteFailed) {
+            $message .= $this->displayError(
+                $this->l('Settings were saved, but the API key file could not be written')
+            );
+        }
+
+        return $message;
     }
 
     public function hookDisplayBackOfficeHeader()
