@@ -190,6 +190,19 @@ class TbIndexNow extends Module
         $intro = $this->context->smarty->fetch(
             $this->local_path . 'views/templates/admin/intro.tpl'
         );
+
+        $purgeUrl = $this->context->link->getAdminLink('AdminModules', true)
+            . '&configure=' . $this->name
+            . '&tab_module=' . $this->tab
+            . '&module_name=' . $this->name
+            . '&submitPurgeUnsuccessful' . $this->name . '=1';
+        $this->context->controller->show_toolbar = true;
+        $this->context->controller->toolbar_btn['purge_unsuccessful'] = [
+            'href' => $purgeUrl,
+            'desc' => $this->l('Delete unsuccessful entries'),
+            'icon' => 'process-icon-delete',
+        ];
+
         $message = '';
 
         if (Tools::isSubmit('submitPurgeUnsuccessful' . $this->name)) {
@@ -312,7 +325,7 @@ class TbIndexNow extends Module
     protected function renderForm()
     {
         $helper = new HelperForm();
-        $helper->show_toolbar            = true;
+        $helper->show_toolbar            = false;
         $helper->table                   = 'configuration';
         $helper->module                  = $this;
         $helper->default_form_language   = $this->context->language->id;
@@ -325,18 +338,6 @@ class TbIndexNow extends Module
             . '&tab_module=' . $this->tab
             . '&module_name=' . $this->name;
         $helper->token                   = Tools::getAdminTokenLite('AdminModules');
-        $actionUrl = $this->context->link->getAdminLink('AdminModules', true)
-            . '&configure=' . $this->name
-            . '&tab_module=' . $this->tab
-            . '&module_name=' . $this->name
-            . '&submitPurgeUnsuccessful' . $this->name . '=1';
-        $helper->toolbar_btn             = [
-            'purge_unsuccessful' => [
-                'href' => $actionUrl,
-                'desc' => $this->l('Delete unsuccessful entries'),
-                'icon' => 'process-icon-delete',
-            ],
-        ];
         $helper->tpl_vars                = [
             'fields_value' => $this->getConfigFormValues(),
             'languages'    => $this->context->controller->getLanguages(),
