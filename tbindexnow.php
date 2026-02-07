@@ -196,12 +196,14 @@ class TbIndexNow extends Module
             . '&tab_module=' . $this->tab
             . '&module_name=' . $this->name
             . '&submitPurgeUnsuccessful' . $this->name . '=1';
-        $this->context->controller->show_toolbar = true;
-        $this->context->controller->toolbar_btn['purge_unsuccessful'] = [
-            'href' => $purgeUrl,
-            'desc' => $this->l('Delete unsuccessful entries'),
-            'icon' => 'process-icon-delete',
-        ];
+        $confirmText = addslashes($this->l('Delete all unsuccessful entries from both tables?'));
+        $actionHtml = '<div class="panel">'
+            . '<h3><i class="icon-wrench"></i> ' . $this->l('Maintenance') . '</h3>'
+            . '<a class="btn btn-default" href="' . htmlspecialchars($purgeUrl, ENT_QUOTES, 'UTF-8') . '" '
+            . 'onclick="return confirm(\'' . $confirmText . '\');">'
+            . '<i class="icon-trash"></i> ' . $this->l('Delete unsuccessful entries')
+            . '</a>'
+            . '</div>';
 
         $message = '';
 
@@ -234,11 +236,11 @@ class TbIndexNow extends Module
         }
         
         if (Tools::isSubmit('submit' . $this->name)) {
-            return $intro . $message . $this->postProcess() . $this->renderForm() . $this->renderStats();
+            return $intro . $message . $actionHtml . $this->postProcess() . $this->renderForm() . $this->renderStats();
         }
 
         $this->context->smarty->assign('module_dir', $this->_path);
-        return $intro . $message . $this->renderForm() . $this->renderStats();
+        return $intro . $message . $actionHtml . $this->renderForm() . $this->renderStats();
     }
 
     protected function purgeUnsuccessfulEntries()
